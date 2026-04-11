@@ -56,8 +56,13 @@ type LedgerData struct {
 	Effects           []EffectData
 	Trades            []TradeData
 	Accounts          []AccountData
+	Offers            []OfferData
 	Trustlines        []TrustlineData
 	AccountSigners    []AccountSignerData
+	ClaimableBalances []ClaimableBalanceData
+	LiquidityPools    []LiquidityPoolData
+	ConfigSettings    []ConfigSettingData
+	TTLEntries        []TTLData
 	NativeBalances    []NativeBalanceData
 	ContractEvents    []ContractEventData
 	ContractData      []ContractDataData
@@ -169,6 +174,51 @@ func ExtractAll(input *LedgerInput) (*LedgerData, []error) {
 		if err == nil {
 			mu.Lock()
 			data.AccountSigners = rows
+			mu.Unlock()
+		}
+		return err
+	})
+	collect("offers", func(in *LedgerInput) error {
+		rows, err := ExtractOffers(in)
+		if err == nil {
+			mu.Lock()
+			data.Offers = rows
+			mu.Unlock()
+		}
+		return err
+	})
+	collect("claimable_balances", func(in *LedgerInput) error {
+		rows, err := ExtractClaimableBalances(in)
+		if err == nil {
+			mu.Lock()
+			data.ClaimableBalances = rows
+			mu.Unlock()
+		}
+		return err
+	})
+	collect("liquidity_pools", func(in *LedgerInput) error {
+		rows, err := ExtractLiquidityPools(in)
+		if err == nil {
+			mu.Lock()
+			data.LiquidityPools = rows
+			mu.Unlock()
+		}
+		return err
+	})
+	collect("config_settings", func(in *LedgerInput) error {
+		rows, err := ExtractConfigSettings(in)
+		if err == nil {
+			mu.Lock()
+			data.ConfigSettings = rows
+			mu.Unlock()
+		}
+		return err
+	})
+	collect("ttl", func(in *LedgerInput) error {
+		rows, err := ExtractTTL(in)
+		if err == nil {
+			mu.Lock()
+			data.TTLEntries = rows
 			mu.Unlock()
 		}
 		return err
