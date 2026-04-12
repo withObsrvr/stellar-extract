@@ -185,13 +185,13 @@ token_transfers.go   ExtractTokenTransfers
 evicted_keys.go      ExtractEvictedKeys
 ```
 
-## Future improvements
+## stellar-etl parity
 
-Based on comparison with [stellar-etl](https://github.com/stellar/stellar-etl) (SDF's official ETL pipeline for BigQuery):
+Based on comparison with [stellar-etl](https://github.com/stellar/stellar-etl) (SDF's official ETL pipeline for BigQuery), the following features have been adopted:
 
-- **Store full `ContractEventXDR`** on contract events. stellar-etl includes the base64-encoded XDR of each event, which allows reprocessing without re-reading the archive. We currently only store decoded fields.
-- **Add `Successful` flag to contract events.** stellar-etl tracks whether the parent transaction succeeded, which is useful for filtering failed invocations. We only have `InSuccessfulContractCall` (narrower — refers to the contract call, not the tx).
-- **Encode contract IDs as C-addresses via `strkey.Encode`** instead of raw hex. stellar-etl uses `strkey.Encode(strkey.VersionByteContract, ...)` which produces `C...` addresses matching what block explorers display. We currently use `hex.EncodeToString` which is less user-friendly.
+- **`ContractEventXDR`** — base64-encoded XDR of the full `ContractEvent`, enabling reprocessing without re-reading the archive
+- **`Successful`** — whether the parent transaction succeeded (broader than `InSuccessfulContractCall` which only tracks the contract call context)
+- **C-address contract IDs** — contract IDs encoded via `strkey.Encode(strkey.VersionByteContract, ...)` producing `C...` addresses matching block explorers, instead of raw hex
 
 ## Design principles
 

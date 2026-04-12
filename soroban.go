@@ -45,6 +45,7 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 		}
 
 		txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
+		txSuccessful := tx.Result.Successful()
 
 		txEvents, err := tx.GetTransactionEvents()
 		if err != nil {
@@ -53,7 +54,7 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 
 		// Extract diagnostic events (contains invocation tree)
 		for diagIdx, diagEvent := range txEvents.DiagnosticEvents {
-			eventData := extractDiagnosticEvent(diagEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(diagIdx))
+			eventData := extractDiagnosticEvent(diagEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(diagIdx), txSuccessful)
 			eventData.EraID = input.EraID
 			events = append(events, eventData)
 		}
@@ -61,18 +62,15 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 		// Extract operation-level contract events
 		for opIdx, opEvents := range txEvents.OperationEvents {
 			for eventIdx, contractEvent := range opEvents {
-				eventData := extractContractEvent(contractEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(opIdx), uint32(eventIdx), false)
+				eventData := extractContractEvent(contractEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(opIdx), uint32(eventIdx), false, txSuccessful)
 				eventData.EraID = input.EraID
 				events = append(events, eventData)
 			}
 		}
 
 		// Extract transaction-level events (V4 / CAP-67 unified events).
-		// These are contract events emitted at the transaction level rather
-		// than tied to a specific operation. Classic operations can produce
-		// these in TransactionMetaV4+.
 		for txEvtIdx, txEvt := range txEvents.TransactionEvents {
-			eventData := extractContractEvent(txEvt.Event, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, 0, uint32(txEvtIdx), true)
+			eventData := extractContractEvent(txEvt.Event, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, 0, uint32(txEvtIdx), true, txSuccessful)
 			eventData.EraID = input.EraID
 			events = append(events, eventData)
 		}
@@ -82,7 +80,7 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 }
 
 // extractDiagnosticEvent extracts data from a diagnostic event.
-func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledgerSeq uint32, closedAt time.Time, ledgerRange uint32, diagIdx uint32) ContractEventData {
+func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledgerSeq uint32, closedAt time.Time, ledgerRange uint32, diagIdx uint32, txSuccessful bool) ContractEventData {
 	eventData := extractContractEvent(
 		diagEvent.Event,
 		txHash,
@@ -92,6 +90,7 @@ func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledger
 		diagIdx,
 		0,
 		diagEvent.InSuccessfulContractCall,
+		txSuccessful,
 	)
 	eventData.EventType = "diagnostic"
 	return eventData
@@ -107,13 +106,22 @@ func extractContractEvent(
 	opIndex uint32,
 	eventIndex uint32,
 	inSuccessfulCall bool,
+	txSuccessful bool,
 ) ContractEventData {
 	eventID := fmt.Sprintf("%s:%d:%d", txHash, opIndex, eventIndex)
 
+	// Encode contract ID as C-address (matching block explorer format)
 	var contractID *string
 	if event.ContractId != nil {
-		id := hex.EncodeToString((*event.ContractId)[:])
-		contractID = &id
+		if cAddr, err := strkey.Encode(strkey.VersionByteContract, (*event.ContractId)[:]); err == nil {
+			contractID = &cAddr
+		}
+	}
+
+	// Base64-encode the full ContractEvent XDR for reprocessing
+	var contractEventXDR string
+	if xdrBytes, err := event.MarshalBinary(); err == nil {
+		contractEventXDR = base64.StdEncoding.EncodeToString(xdrBytes)
 	}
 
 	eventType := eventTypeString(event.Type)
@@ -130,6 +138,8 @@ func extractContractEvent(
 
 		EventType:                eventType,
 		InSuccessfulContractCall: inSuccessfulCall,
+		Successful:               txSuccessful,
+		ContractEventXDR:         contractEventXDR,
 
 		TopicsJSON:    topicsJSON,
 		TopicsDecoded: topicsDecoded,

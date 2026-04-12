@@ -5,12 +5,14 @@ import "time"
 // ContractEventData represents Soroban contract events stream (contract_events_stream_v1)
 type ContractEventData struct {
 	EventID                  string
-	ContractID               *string
+	ContractID               *string // C-address (strkey-encoded), e.g. "CAAAA..."
 	LedgerSequence           uint32
 	TransactionHash          string
 	ClosedAt                 time.Time
 	EventType                string
 	InSuccessfulContractCall bool
+	Successful               bool   // whether the parent transaction succeeded
+	ContractEventXDR         string // base64-encoded XDR of the full ContractEvent (for reprocessing)
 	TopicsJSON               string
 	TopicsDecoded            string
 	DataXDR                  string
