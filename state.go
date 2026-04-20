@@ -13,82 +13,76 @@ import (
 
 // ExtractConfigSettings extracts network configuration settings from a ledger.
 // Protocol 20+ Soroban configuration parameters.
+//
+// Config setting changes can be emitted as ledger-level changes during protocol
+// upgrades and may not appear in per-transaction change streams. For that
+// reason this extractor intentionally uses the ledger change reader rather than
+// the transaction reader.
 func ExtractConfigSettings(input *LedgerInput) ([]ConfigSettingData, error) {
 	var configSettingsList []ConfigSettingData
 
-	txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
 	if err != nil {
-		log.Printf("Failed to create transaction reader for config settings: %v", err)
+		log.Printf("Failed to create ledger change reader for config settings: %v", err)
 		return configSettingsList, nil
 	}
-	defer txReader.Close()
+	defer changeReader.Close()
 
 	configSettingsMap := make(map[int32]*ConfigSettingData)
 
 	for {
-		tx, err := txReader.Read()
+		change, err := changeReader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			log.Printf("Error reading transaction for config settings: %v", err)
+			log.Printf("Error reading ledger change for config settings: %v", err)
+			continue
+		}
+		if !isConfigSettingChange(change) {
 			continue
 		}
 
-		changes, err := tx.GetChanges()
-		if err != nil {
-			log.Printf("Failed to get transaction changes: %v", err)
+		var configEntry *xdr.ConfigSettingEntry
+		var deleted bool
+		var lastModifiedLedger uint32
+
+		if change.Post != nil {
+			entry, _ := change.Post.Data.GetConfigSetting()
+			configEntry = &entry
+			lastModifiedLedger = uint32(change.Post.LastModifiedLedgerSeq)
+			deleted = false
+		} else if change.Pre != nil {
+			entry, _ := change.Pre.Data.GetConfigSetting()
+			configEntry = &entry
+			lastModifiedLedger = uint32(change.Pre.LastModifiedLedgerSeq)
+			deleted = true
+		}
+
+		if configEntry == nil {
 			continue
 		}
 
-		for _, change := range changes {
-			if !isConfigSettingChange(change) {
-				continue
-			}
+		configSettingID := int32(configEntry.ConfigSettingId)
+		now := time.Now().UTC()
 
-			var configEntry *xdr.ConfigSettingEntry
-			var deleted bool
-			var lastModifiedLedger uint32
+		data := ConfigSettingData{
+			ConfigSettingID: configSettingID,
+			LedgerSequence:  input.Sequence,
 
-			if change.Post != nil {
-				entry, _ := change.Post.Data.GetConfigSetting()
-				configEntry = &entry
-				lastModifiedLedger = uint32(change.Post.LastModifiedLedgerSeq)
-				deleted = false
-			} else if change.Pre != nil {
-				entry, _ := change.Pre.Data.GetConfigSetting()
-				configEntry = &entry
-				lastModifiedLedger = uint32(change.Pre.LastModifiedLedgerSeq)
-				deleted = true
-			}
+			LastModifiedLedger: int32(lastModifiedLedger),
+			Deleted:            deleted,
+			ClosedAt:           input.ClosedAt,
 
-			if configEntry == nil {
-				continue
-			}
+			ConfigSettingXDR: encodeConfigSettingXDR(configEntry),
 
-			configSettingID := int32(configEntry.ConfigSettingId)
-
-			now := time.Now().UTC()
-
-			data := ConfigSettingData{
-				ConfigSettingID: configSettingID,
-				LedgerSequence:  input.Sequence,
-
-				LastModifiedLedger: int32(lastModifiedLedger),
-				Deleted:            deleted,
-				ClosedAt:           input.ClosedAt,
-
-				ConfigSettingXDR: encodeConfigSettingXDR(configEntry),
-
-				CreatedAt:   now,
-				LedgerRange: input.LedgerRange,
-				EraID:       input.EraID,
-			}
-
-			parseConfigSettingFields(configEntry, &data)
-
-			configSettingsMap[configSettingID] = &data
+			CreatedAt:   now,
+			LedgerRange: input.LedgerRange,
+			EraID:       input.EraID,
 		}
+
+		parseConfigSettingFields(configEntry, &data)
+		configSettingsMap[configSettingID] = &data
 	}
 
 	for _, data := range configSettingsMap {
