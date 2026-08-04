@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # go-stellar-sdk releases carry protocol upgrades that add XDR union arms.
+  # Those do not break the build, so the upgrade needs to arrive as a reviewable
+  # PR rather than being noticed months later in the bronze tables.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      go-stellar-sdk:
+        patterns:
+          - github.com/stellar/*
