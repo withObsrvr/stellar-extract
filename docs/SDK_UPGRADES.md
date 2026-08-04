@@ -90,7 +90,13 @@ NULL is the signature of this bug class.
   `wasm_hash`. When a third kind arrived, the inference broke; the explicit
   column would not have.
 - **Add the enum to `protocol_coverage_test.go`** whenever you write a new
-  `switch` on an XDR union.
+  `switch` on an XDR union. The guards probe `ValidEnum` over a bounded window
+  (`discriminantScanMin`/`discriminantScanMax`) because the generated per-enum
+  maps are unexported. XDR discriminants are not all small positives — the
+  result-code enums run to -18, `CryptoKeyType` puts `KEY_TYPE_MUXED_ED25519` at
+  `0x100`, and `SCSpecType` uses a 1000-2000 band — so if you add an enum whose
+  values sit outside the window, widen it. `TestDiscriminantScanWindowHasHeadroom`
+  fails when a guarded enum approaches an edge.
 - **Populated unions only in tests.** The generated `Must*` accessors dereference
   the arm pointer, so a zero-valued `xdr.ContractExecutable{Type: ...}` panics.
   Build a valid payload per arm.

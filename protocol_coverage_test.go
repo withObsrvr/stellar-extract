@@ -17,16 +17,67 @@ import (
 // declares valid and fail when one is unhandled, so the next upgrade surfaces
 // the gap in CI instead of in the bronze tables.
 
-// validDiscriminants returns every discriminant value the SDK accepts for an
-// enum, discovered through the generated ValidEnum method.
+// Discriminant search window. XDR enums are int32, so no bounded scan is
+// exhaustive in principle -- this is a search window, not a proof. The bounds
+// are taken from what the SDK actually declares: across every enum in
+// xdr_generated.go the discriminants span [-18, 2000]. Three conventions put
+// values outside a naive 0..255 range:
+//
+//   - the result-code enums run negative (transactionResultCode reaches -18),
+//   - CryptoKeyType places KEY_TYPE_MUXED_ED25519 at 0x100 (256), which
+//     transactions.go switches on in getMuxedAddress,
+//   - SCSpecType uses a 1000-2000 band.
+//
+// The window below clears the observed range by ~32x above and ~3600x below.
+// TestDiscriminantScanWindowHasHeadroom fails if a guarded enum creeps toward
+// an edge, which is the signal to widen it.
+const (
+	discriminantScanMin = -65536
+	discriminantScanMax = 65536
+)
+
+// validDiscriminants returns the discriminants the SDK accepts for an enum
+// within [discriminantScanMin, discriminantScanMax], discovered through the
+// generated ValidEnum method. The generated per-enum maps are unexported, so
+// probing is the only way to enumerate them from outside the xdr package.
 func validDiscriminants(e interface{ ValidEnum(int32) bool }) []int32 {
 	var valid []int32
-	for v := int32(0); v < 256; v++ {
-		if e.ValidEnum(v) {
-			valid = append(valid, v)
+	for v := discriminantScanMin; v <= discriminantScanMax; v++ {
+		if e.ValidEnum(int32(v)) {
+			valid = append(valid, int32(v))
 		}
 	}
 	return valid
+}
+
+// TestDiscriminantScanWindowHasHeadroom keeps the search window above honest.
+// CryptoKeyType is included even though no guard below uses it: its
+// KEY_TYPE_MUXED_ED25519 = 0x100 is the concrete reason the window cannot stop
+// at 255, and asserting it here pins that reason to a failing test rather than
+// a comment.
+func TestDiscriminantScanWindowHasHeadroom(t *testing.T) {
+	guarded := map[string]interface{ ValidEnum(int32) bool }{
+		"ScValType":              xdr.ScValType(0),
+		"ContractExecutableType": xdr.ContractExecutableType(0),
+		"StellarValueType":       xdr.StellarValueType(0),
+		"CryptoKeyType":          xdr.CryptoKeyType(0),
+	}
+
+	const margin = 1024
+	for name, e := range guarded {
+		discs := validDiscriminants(e)
+		if len(discs) == 0 {
+			t.Errorf("no valid %s discriminants found in [%d, %d]; the scan window "+
+				"no longer covers this enum", name, discriminantScanMin, discriminantScanMax)
+			continue
+		}
+		lo, hi := discs[0], discs[len(discs)-1]
+		if int(lo) < discriminantScanMin+margin || int(hi) > discriminantScanMax-margin {
+			t.Errorf("%s discriminants span [%d, %d], within %d of the scan window "+
+				"[%d, %d]; widen the window or the exhaustiveness guards below may "+
+				"miss an arm", name, lo, hi, margin, discriminantScanMin, discriminantScanMax)
+		}
+	}
 }
 
 func TestConvertScValToJSONHandlesEveryScValType(t *testing.T) {
