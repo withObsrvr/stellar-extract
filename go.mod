@@ -2,7 +2,7 @@ module github.com/withObsrvr/stellar-extract
 
 go 1.25.4
 
-require github.com/stellar/go-stellar-sdk v0.6.0
+require github.com/stellar/go-stellar-sdk v0.7.1
 
 require (
 	cloud.google.com/go v0.114.0 // indirect
