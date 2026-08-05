@@ -79,6 +79,87 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 	return events, nil
 }
 
+// ExtractContractEventsView extracts the same typed contract-event rows from
+// a borrowed LedgerCloseMeta view. The SDK pairs envelopes and transaction
+// processing in one cached walk; only the event payloads retained in output
+// rows are decoded.
+func ExtractContractEventsView(input *LedgerViewInput) ([]ContractEventData, error) {
+	transactions, err := input.transactionViews()
+	if err != nil {
+		return nil, fmt.Errorf("extract ledger transaction views: %w", err)
+	}
+	return extractContractEventsFromViews(input, transactions)
+}
+
+func extractContractEventsFromViews(input *LedgerViewInput, transactions []ingest.LedgerTransactionView) ([]ContractEventData, error) {
+	var events []ContractEventData
+	for txIndex := range transactions {
+		transaction := transactions[txIndex]
+		txHash := hex.EncodeToString(transaction.Hash[:])
+
+		for diagnosticIndex, raw := range transaction.DiagnosticEvents {
+			var diagnostic xdr.DiagnosticEvent
+			if err := diagnostic.UnmarshalBinary(raw); err != nil {
+				return nil, fmt.Errorf("transaction %s diagnostic event %d: %w", txHash, diagnosticIndex, err)
+			}
+			row := extractDiagnosticEvent(
+				diagnostic,
+				txHash,
+				input.Sequence,
+				input.ClosedAt,
+				input.LedgerRange,
+				uint32(diagnosticIndex),
+				transaction.Successful,
+			)
+			row.EraID = input.EraID
+			events = append(events, row)
+		}
+
+		for operationIndex, operationEvents := range transaction.ContractEvents {
+			for eventIndex, raw := range operationEvents {
+				var event xdr.ContractEvent
+				if err := event.UnmarshalBinary(raw); err != nil {
+					return nil, fmt.Errorf("transaction %s operation %d event %d: %w", txHash, operationIndex, eventIndex, err)
+				}
+				row := extractContractEvent(
+					event,
+					txHash,
+					input.Sequence,
+					input.ClosedAt,
+					input.LedgerRange,
+					uint32(operationIndex),
+					uint32(eventIndex),
+					false,
+					transaction.Successful,
+				)
+				row.EraID = input.EraID
+				events = append(events, row)
+			}
+		}
+
+		for eventIndex, raw := range transaction.TransactionEvents {
+			var transactionEvent xdr.TransactionEvent
+			if err := transactionEvent.UnmarshalBinary(raw); err != nil {
+				return nil, fmt.Errorf("transaction %s transaction event %d: %w", txHash, eventIndex, err)
+			}
+			row := extractContractEvent(
+				transactionEvent.Event,
+				txHash,
+				input.Sequence,
+				input.ClosedAt,
+				input.LedgerRange,
+				0,
+				uint32(eventIndex),
+				true,
+				transaction.Successful,
+			)
+			row.EraID = input.EraID
+			events = append(events, row)
+		}
+	}
+	return events, nil
+}
+
 // extractDiagnosticEvent extracts data from a diagnostic event.
 func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledgerSeq uint32, closedAt time.Time, ledgerRange uint32, diagIdx uint32, txSuccessful bool) ContractEventData {
 	eventData := extractContractEvent(
