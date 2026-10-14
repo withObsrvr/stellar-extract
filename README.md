@@ -8,7 +8,7 @@ Shared Go library for extracting typed rows from Stellar ledger data. Single sou
 go get github.com/withObsrvr/stellar-extract@latest
 ```
 
-Only dependency: `github.com/stellar/go-stellar-sdk v0.7.1` (Protocol 28).
+Only dependency: `github.com/stellar/go-stellar-sdk v0.7.3` (Protocol 28).
 
 Upgrading that pin is a protocol change, not a routine bump — see
 [docs/SDK_UPGRADES.md](docs/SDK_UPGRADES.md).
@@ -183,7 +183,7 @@ func main() {
 Three fields that this library declared but never populated now carry data,
 and one index changes meaning. Read this before bumping.
 
-### `operations`: the call graph is populated
+### `operations`: the call graph and auth credentials are populated
 
 `OperationData.ContractCallsJSON`, `.ContractsInvolved` and `.MaxCallDepth`
 existed since the type was introduced and were assigned nowhere —
@@ -194,12 +194,32 @@ They are now extracted from diagnostic events and the authorization tree.
 A consumer that treated nil as "feature absent" will start seeing values.
 `ContractsInvolved` is sorted, so the column is reproducible across runs.
 
+`SorobanAuthCredentialsTypes` and `SorobanAuthAddresses` are new: parallel
+arrays describing each authorization entry's credentials discriminant and
+strkey authorizer. Both are nil when an operation carries no auth entries,
+which keeps "no authorization" distinct from "an authorization with no
+authorizer". Both consuming ingesters had implemented this separately; it
+belongs here.
+
 ### `accounts`: `SequenceLedger` and `SequenceTime` added
 
 `AccountData` now carries the CAP-21 sequence bump ledger and time from
 `AccountEntryExtensionV3`. Both read zero on accounts that predate the
 extension. A consumer persisting these needs columns for them; one that was
 writing zeros into existing columns will start writing real values.
+
+### Row order is now deterministic
+
+Thirteen extractors deduplicated rows through a map and then ranged over it
+to build their output slice. Go randomizes map iteration, so each emitted the
+same rows in a different sequence on every run over one ledger. Rows are now
+ordered by the dedup key — the identity each extractor had already chosen.
+
+Nothing downstream observed this: golden suites hash rows with `ORDER BY` and
+the cross-ingester parity harness compares multisets, so the randomization
+stayed invisible while still making Parquet output differ byte-for-byte
+between two extractions of the same ledger. If you content-address or
+deduplicate extraction output, this is the change that makes that work.
 
 ### `trades`: pool trades are emitted, and `TradeIndex` is positional
 

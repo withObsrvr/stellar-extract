@@ -525,9 +525,7 @@ func ExtractContractData(input *LedgerInput) ([]ContractDataData, error) {
 		contractMap[dedupeKey] = &data
 	}
 
-	for _, data := range contractMap {
-		contractDataList = append(contractDataList, *data)
-	}
+	contractDataList = sortedMapValues(contractMap)
 
 	return contractDataList, nil
 }
@@ -741,9 +739,7 @@ func ExtractContractCode(input *LedgerInput) ([]ContractCodeData, error) {
 		contractCodeMap[codeHashHex] = &data
 	}
 
-	for _, data := range contractCodeMap {
-		contractCodeList = append(contractCodeList, *data)
-	}
+	contractCodeList = sortedMapValues(contractCodeMap)
 
 	return contractCodeList, nil
 }
@@ -930,9 +926,7 @@ func ExtractRestoredKeys(input *LedgerInput) ([]RestoredKeyData, error) {
 		}
 	}
 
-	for _, data := range restoredKeysMap {
-		restoredKeysList = append(restoredKeysList, *data)
-	}
+	restoredKeysList = sortedMapValues(restoredKeysMap)
 
 	return restoredKeysList, nil
 }

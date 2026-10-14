@@ -150,6 +150,16 @@ type OperationData struct {
 	ContractCallsJSON *string
 	ContractsInvolved []string
 	MaxCallDepth      *int
+
+	// Soroban authorization credentials, one entry per
+	// SorobanAuthorizationEntry on the operation. Parallel arrays of equal
+	// length: Types holds the credentials discriminant and Addresses the
+	// strkey authorizer, empty for SOURCE_ACCOUNT where the authorizer is
+	// the transaction source. Both nil on non-Soroban operations and on
+	// InvokeHostFunction operations with no auth entries, which keeps
+	// "no auth" distinct from "an empty authorizer".
+	SorobanAuthCredentialsTypes []string
+	SorobanAuthAddresses        []string
 	// TOID
 	TransactionID int64
 	OperationID   int64

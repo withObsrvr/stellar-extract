@@ -2,6 +2,7 @@ package extract
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -238,4 +239,97 @@ func TestIntegrateCallGraphLeavesClassicOperationsUntouched(t *testing.T) {
 // covered by the fixture suites in the consuming repositories.
 func ingestTransactionStub() ingest.LedgerTransaction {
 	return ingest.LedgerTransaction{}
+}
+
+// Auth credentials are recorded independently of the call graph. A passkey
+// wallet authorizing a plain token transfer has credentials worth storing
+// and no cross-contract calls, so a nil call graph must not cost them.
+func TestIntegrateCallGraphRecordsAuthCredentialsWithoutCalls(t *testing.T) {
+	addrA, idA := contractAddress(t, 0x0A)
+	authorizer, _ := contractAddress(t, 0x0C)
+
+	op := xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeInvokeHostFunction,
+		InvokeHostFunctionOp: &xdr.InvokeHostFunctionOp{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: addrA,
+					FunctionName:    xdr.ScSymbol("transfer"),
+				},
+			},
+			Auth: []xdr.SorobanAuthorizationEntry{
+				{Credentials: xdr.SorobanCredentials{
+					Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
+				}},
+				{
+					Credentials: xdr.SorobanCredentials{
+						Type:    xdr.SorobanCredentialsTypeSorobanCredentialsAddress,
+						Address: &xdr.SorobanAddressCredentials{Address: authorizer},
+					},
+					// Same contract as the invocation, so this produces no
+					// call-graph edge — only credentials.
+					RootInvocation: contractFnInvocation(addrA, "transfer"),
+				},
+			},
+		},
+	}}
+
+	var opData OperationData
+	if err := integrateCallGraph(ingestTransactionStub(), 0, op, &opData); err != nil {
+		t.Fatalf("integrateCallGraph: %v", err)
+	}
+
+	if opData.ContractCallsJSON != nil {
+		t.Errorf("expected no call graph for a self-invocation, got %s", *opData.ContractCallsJSON)
+	}
+	_ = idA
+
+	wantTypes := []string{AuthCredentialsSourceAccount, AuthCredentialsAddress}
+	if len(opData.SorobanAuthCredentialsTypes) != 2 {
+		t.Fatalf("credential types = %v, want %v", opData.SorobanAuthCredentialsTypes, wantTypes)
+	}
+	for i, want := range wantTypes {
+		if opData.SorobanAuthCredentialsTypes[i] != want {
+			t.Errorf("credential type %d = %q, want %q", i, opData.SorobanAuthCredentialsTypes[i], want)
+		}
+	}
+	// Parallel arrays: position i describes the same entry in both.
+	if len(opData.SorobanAuthAddresses) != len(opData.SorobanAuthCredentialsTypes) {
+		t.Fatalf("addresses %d, types %d — the arrays must stay parallel",
+			len(opData.SorobanAuthAddresses), len(opData.SorobanAuthCredentialsTypes))
+	}
+	if opData.SorobanAuthAddresses[0] != "" {
+		t.Errorf("SOURCE_ACCOUNT address = %q, want empty — the authorizer is the tx source",
+			opData.SorobanAuthAddresses[0])
+	}
+	if opData.SorobanAuthAddresses[1] == "" {
+		t.Error("ADDRESS credential has no authorizer address")
+	}
+}
+
+// Zero auth entries must leave both arrays nil, so "no authorization" stays
+// distinct from "an authorization with no authorizer".
+func TestExtractAuthCredentialsOnNoEntriesIsNil(t *testing.T) {
+	types, addrs := extractAuthCredentials(nil)
+	if types != nil || addrs != nil {
+		t.Fatalf("expected nil arrays, got %v / %v", types, addrs)
+	}
+}
+
+// A credentials arm this library does not know about must still produce an
+// entry. Dropping it would silently shorten the arrays and misalign them
+// against the operation's auth entries.
+func TestExtractAuthCredentialsRecordsUnknownArm(t *testing.T) {
+	entries := []xdr.SorobanAuthorizationEntry{
+		{Credentials: xdr.SorobanCredentials{Type: xdr.SorobanCredentialsType(9999)}},
+	}
+
+	types, addrs := extractAuthCredentials(entries)
+	if len(types) != 1 || len(addrs) != 1 {
+		t.Fatalf("unknown arm was dropped: types=%v addrs=%v", types, addrs)
+	}
+	if !strings.HasPrefix(types[0], "UNKNOWN_") {
+		t.Errorf("type = %q, want an UNKNOWN_ marker", types[0])
+	}
 }

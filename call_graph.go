@@ -78,16 +78,12 @@ func extractCallGraph(
 		}
 	}
 
-	// Convert set to slice. Sorted because Go randomises map iteration order,
-	// and this slice is serialised into the operations.contracts_involved JSON
-	// array. Without the sort the same ledger produces a different value on
-	// every run, which makes Bronze output irreproducible and breaks any
-	// downstream comparison or deduplication on the column.
-	contractsInvolved := make([]string, 0, len(contractsSet))
-	for contract := range contractsSet {
-		contractsInvolved = append(contractsInvolved, contract)
-	}
-	sort.Strings(contractsInvolved)
+	// Sorted because Go randomises map iteration order, and this slice is
+	// serialised into the operations.contracts_involved JSON array. Without
+	// it the same ledger produces a different value on every run, which
+	// makes Bronze output irreproducible and breaks any downstream
+	// comparison or deduplication on the column.
+	contractsInvolved := sortedSetKeys(contractsSet)
 
 	// If no cross-contract calls, return nil (no call graph to store)
 	if len(allCalls) == 0 {
@@ -507,6 +503,14 @@ func integrateCallGraph(
 	op xdr.Operation,
 	opData *OperationData,
 ) error {
+	// Auth credentials first: they do not depend on the call graph and are
+	// worth recording on an operation that has no cross-contract calls at
+	// all, so a call-graph failure below must not cost them.
+	if invokeOp, ok := op.Body.GetInvokeHostFunctionOp(); ok {
+		opData.SorobanAuthCredentialsTypes, opData.SorobanAuthAddresses =
+			extractAuthCredentials(invokeOp.Auth)
+	}
+
 	callGraph, err := extractCallGraph(tx, opIndex, op)
 	if err != nil {
 		log.Printf("Warning: Failed to extract call graph for op %d: %v", opIndex, err)
@@ -566,4 +570,79 @@ func isPrintableASCII(b []byte) bool {
 		}
 	}
 	return true
+}
+
+// Soroban authorization credential discriminants, as stored in
+// OperationData.SorobanAuthCredentialsTypes.
+const (
+	AuthCredentialsSourceAccount       = "SOURCE_ACCOUNT"
+	AuthCredentialsAddress             = "ADDRESS"
+	AuthCredentialsAddressV2           = "ADDRESS_V2"
+	AuthCredentialsAddressWithDelegate = "ADDRESS_WITH_DELEGATES"
+)
+
+// extractAuthCredentials describes each authorization entry on an
+// InvokeHostFunction operation: the credentials discriminant, and the
+// strkey authorizer for the address-bearing arms.
+//
+// Returns (nil, nil) for zero auth entries so the caller can leave the row
+// NULL rather than storing an empty array — "this operation carries no
+// authorization" and "this operation carries an authorization with no
+// authorizer" are different facts. The two returned slices always have
+// equal length, so position i describes the same entry in both.
+//
+// Useful independently of the call graph: a passkey wallet authorizing a
+// plain token transfer has credentials worth recording and no
+// cross-contract calls at all.
+func extractAuthCredentials(authEntries []xdr.SorobanAuthorizationEntry) ([]string, []string) {
+	if len(authEntries) == 0 {
+		return nil, nil
+	}
+
+	types := make([]string, 0, len(authEntries))
+	addrs := make([]string, 0, len(authEntries))
+
+	for _, entry := range authEntries {
+		switch entry.Credentials.Type {
+		case xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount:
+			types = append(types, AuthCredentialsSourceAccount)
+			addrs = append(addrs, "")
+		case xdr.SorobanCredentialsTypeSorobanCredentialsAddress:
+			types = append(types, AuthCredentialsAddress)
+			addr := ""
+			if ac, ok := entry.Credentials.GetAddress(); ok {
+				if s, err := ac.Address.String(); err == nil {
+					addr = s
+				}
+			}
+			addrs = append(addrs, addr)
+		case xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2:
+			types = append(types, AuthCredentialsAddressV2)
+			addr := ""
+			if ac, ok := entry.Credentials.GetAddressV2(); ok {
+				if s, err := ac.Address.String(); err == nil {
+					addr = s
+				}
+			}
+			addrs = append(addrs, addr)
+		case xdr.SorobanCredentialsTypeSorobanCredentialsAddressWithDelegates:
+			types = append(types, AuthCredentialsAddressWithDelegate)
+			addr := ""
+			if ac, ok := entry.Credentials.GetAddressWithDelegates(); ok {
+				if s, err := ac.AddressCredentials.Address.String(); err == nil {
+					addr = s
+				}
+			}
+			addrs = append(addrs, addr)
+		default:
+			// Forward compatibility. A protocol upgrade can add a
+			// credentials arm, and Go will not warn about the switch that
+			// ignores it; recording the numeric discriminant keeps the new
+			// arm visible instead of dropping the entry. See
+			// docs/SDK_UPGRADES.md.
+			types = append(types, fmt.Sprintf("UNKNOWN_%d", entry.Credentials.Type))
+			addrs = append(addrs, "")
+		}
+	}
+	return types, addrs
 }

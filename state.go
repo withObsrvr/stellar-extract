@@ -85,9 +85,7 @@ func ExtractConfigSettings(input *LedgerInput) ([]ConfigSettingData, error) {
 		configSettingsMap[configSettingID] = &data
 	}
 
-	for _, data := range configSettingsMap {
-		configSettingsList = append(configSettingsList, *data)
-	}
+	configSettingsList = sortedMapValues(configSettingsMap)
 
 	return configSettingsList, nil
 }
@@ -265,9 +263,7 @@ func ExtractTTL(input *LedgerInput) ([]TTLData, error) {
 		}
 	}
 
-	for _, data := range ttlMap {
-		ttlList = append(ttlList, *data)
-	}
+	ttlList = sortedMapValues(ttlMap)
 
 	return ttlList, nil
 }

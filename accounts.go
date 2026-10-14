@@ -58,9 +58,7 @@ func ExtractAccounts(input *LedgerInput) ([]AccountData, error) {
 		accountMap[accountData.AccountID] = &accountCopy
 	}
 
-	for _, account := range accountMap {
-		accounts = append(accounts, *account)
-	}
+	accounts = sortedMapValues(accountMap)
 
 	return accounts, nil
 }
@@ -213,9 +211,7 @@ func ExtractTrustlines(input *LedgerInput) ([]TrustlineData, error) {
 		trustlineMap[key] = &trustlineCopy
 	}
 
-	for _, trustline := range trustlineMap {
-		trustlines = append(trustlines, *trustline)
-	}
+	trustlines = sortedMapValues(trustlineMap)
 
 	return trustlines, nil
 }
@@ -367,9 +363,7 @@ func ExtractAccountSigners(input *LedgerInput) ([]AccountSignerData, error) {
 		}
 	}
 
-	for _, s := range signerMap {
-		signersList = append(signersList, *s)
-	}
+	signersList = sortedMapValues(signerMap)
 
 	return signersList, nil
 }
@@ -469,9 +463,7 @@ func ExtractNativeBalances(input *LedgerInput) ([]NativeBalanceData, error) {
 		nativeBalancesMap[accountID] = &data
 	}
 
-	for _, data := range nativeBalancesMap {
-		nativeBalancesList = append(nativeBalancesList, *data)
-	}
+	nativeBalancesList = sortedMapValues(nativeBalancesMap)
 
 	return nativeBalancesList, nil
 }

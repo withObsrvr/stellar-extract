@@ -57,9 +57,7 @@ func ExtractOffers(input *LedgerInput) ([]OfferData, error) {
 		offerMap[offerData.OfferID] = &offerCopy
 	}
 
-	for _, offer := range offerMap {
-		offers = append(offers, *offer)
-	}
+	offers = sortedMapValues(offerMap)
 
 	return offers, nil
 }
@@ -217,9 +215,7 @@ func ExtractClaimableBalances(input *LedgerInput) ([]ClaimableBalanceData, error
 		balanceMap[balanceID] = &balance
 	}
 
-	for _, balance := range balanceMap {
-		balances = append(balances, *balance)
-	}
+	balances = sortedMapValues(balanceMap)
 
 	return balances, nil
 }
@@ -312,9 +308,7 @@ func ExtractLiquidityPools(input *LedgerInput) ([]LiquidityPoolData, error) {
 		poolMap[poolID] = &pool
 	}
 
-	for _, pool := range poolMap {
-		pools = append(pools, *pool)
-	}
+	pools = sortedMapValues(poolMap)
 
 	return pools, nil
 }

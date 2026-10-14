@@ -36,9 +36,7 @@ func ExtractEvictedKeys(input *LedgerInput) ([]EvictedKeyData, error) {
 	}
 
 	// Convert map to slice
-	for _, data := range evictedKeysMap {
-		evictedKeysList = append(evictedKeysList, *data)
-	}
+	evictedKeysList = sortedMapValues(evictedKeysMap)
 
 	return evictedKeysList, nil
 }
