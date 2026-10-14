@@ -378,9 +378,3 @@ func extractContractInvocationDetails(op xdr.Operation) (*string, *string, *stri
 
 	return contractID, functionName, argsStr, nil
 }
-
-// integrateCallGraph is a no-op stub to avoid pulling in the full call_graph.go dependency.
-// Cross-contract call graph extraction can be added later if needed.
-func integrateCallGraph(_ ingest.LedgerTransaction, _ int, _ xdr.Operation, _ *OperationData) error {
-	return nil
-}

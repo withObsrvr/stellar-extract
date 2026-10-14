@@ -178,6 +178,52 @@ func main() {
 }
 ```
 
+## Upgrading to v0.2.0
+
+Three fields that this library declared but never populated now carry data,
+and one index changes meaning. Read this before bumping.
+
+### `operations`: the call graph is populated
+
+`OperationData.ContractCallsJSON`, `.ContractsInvolved` and `.MaxCallDepth`
+existed since the type was introduced and were assigned nowhere —
+`integrateCallGraph` was a no-op stub. Every consumer read nil, with no way
+to tell that apart from a ledger with no cross-contract calls.
+
+They are now extracted from diagnostic events and the authorization tree.
+A consumer that treated nil as "feature absent" will start seeing values.
+`ContractsInvolved` is sorted, so the column is reproducible across runs.
+
+### `accounts`: `SequenceLedger` and `SequenceTime` added
+
+`AccountData` now carries the CAP-21 sequence bump ledger and time from
+`AccountEntryExtensionV3`. Both read zero on accounts that predate the
+extension. A consumer persisting these needs columns for them; one that was
+writing zeros into existing columns will start writing real values.
+
+### `trades`: pool trades are emitted, and `TradeIndex` is positional
+
+**This changes existing rows, not just new ones.**
+
+Liquidity-pool matches were skipped outright, so no AMM trade has ever been
+recorded. They are now emitted with `TradeType` `"liquidity_pool"`, an empty
+`SellerAccount` — a pool has no counterparty account — and the new
+`LiquidityPoolID` holding the hex pool hash. On one three-ledger pubnet
+fixture this recovers 135 trades against 219 previously reported: roughly
+38% of that ledger range's trades were missing.
+
+`TradeIndex` is now the claim atom's **position within the operation's claim
+list**, where it used to be a running count of emitted rows. The two differ
+wherever a claim is skipped. This makes
+`(transaction_hash, operation_index, trade_index)` a stable handle on one
+claim atom in the XDR — without it, starting to emit pool trades would have
+silently renumbered every orderbook trade that followed one in the same
+operation, repointing any consumer keyed on that triple.
+
+Backfill note: both the index change and the new rows apply retroactively, so
+`trades` written by an earlier version is not comparable row-for-row with
+output from this one.
+
 ## File layout
 
 ```
@@ -194,6 +240,7 @@ transactions.go      ExtractTransactions + helpers
 operations.go        ExtractOperations
 effects.go           ExtractEffects (50+ effect types)
 trades.go            ExtractTrades
+call_graph.go        cross-contract call graph for OperationData
 accounts.go          ExtractAccounts, ExtractTrustlines, ExtractAccountSigners, ExtractNativeBalances
 soroban.go           ExtractContractEvents, ExtractContractData, ExtractContractCode, ExtractContractCreations, ExtractRestoredKeys
 scval_converter.go   ConvertScValToJSON

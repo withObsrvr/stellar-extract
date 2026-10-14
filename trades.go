@@ -143,12 +143,12 @@ func offerClaimsFromResult(opResult xdr.OperationResult) []xdr.ClaimAtom {
 }
 
 func appendTradesFromClaims(trades []TradeData, claims []xdr.ClaimAtom, ctx tradeContext) []TradeData {
-	tradeIndex := 0
-	for _, claim := range claims {
+	// tradeIndex is the claim's position, taken from the range rather than
+	// counted over emitted rows. A claim this function declines to emit
+	// therefore leaves a gap instead of shifting every later trade's index,
+	// which is what makes the index a stable handle on the XDR.
+	for tradeIndex, claim := range claims {
 		if claim.AmountSold() == 0 && claim.AmountBought() == 0 {
-			continue
-		}
-		if claim.Type == xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool {
 			continue
 		}
 		trade, ok := tradeFromClaim(claim, ctx, tradeIndex)
@@ -156,15 +156,22 @@ func appendTradesFromClaims(trades []TradeData, claims []xdr.ClaimAtom, ctx trad
 			continue
 		}
 		trades = append(trades, trade)
-		tradeIndex++
 	}
 	return trades
 }
+
+// Trade type discriminants, as stored in TradeData.TradeType.
+const (
+	TradeTypeOrderbook     = "orderbook"
+	TradeTypeLiquidityPool = "liquidity_pool"
+)
 
 func tradeFromClaim(claim xdr.ClaimAtom, ctx tradeContext, tradeIndex int) (TradeData, bool) {
 	var sellerAccount, sellingAmount, buyingAmount string
 	var sellingCode, sellingIssuer, buyingCode, buyingIssuer *string
 	var sellingAsset, buyingAsset xdr.Asset
+	tradeType := TradeTypeOrderbook
+	var liquidityPoolID *string
 
 	switch claim.Type {
 	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:
@@ -181,6 +188,19 @@ func tradeFromClaim(claim xdr.ClaimAtom, ctx tradeContext, tradeIndex int) (Trad
 		buyingAmount = amount.String(v0.AmountBought)
 		sellingAsset = v0.AssetSold
 		buyingAsset = v0.AssetBought
+	case xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool:
+		// An AMM match. There is no resting offer and no counterparty
+		// account, so SellerAccount stays empty and the pool is identified
+		// by LiquidityPoolID. Note that claim.SellerId() panics on this arm
+		// — the fields have to be read off the union directly.
+		lp := claim.MustLiquidityPool()
+		poolID := poolIDToString(lp.LiquidityPoolId)
+		liquidityPoolID = &poolID
+		tradeType = TradeTypeLiquidityPool
+		sellingAmount = amount.String(lp.AmountSold)
+		buyingAmount = amount.String(lp.AmountBought)
+		sellingAsset = lp.AssetSold
+		buyingAsset = lp.AssetBought
 	default:
 		return TradeData{}, false
 	}
@@ -193,7 +213,7 @@ func tradeFromClaim(claim xdr.ClaimAtom, ctx tradeContext, tradeIndex int) (Trad
 		TransactionHash:    ctx.txHash,
 		OperationIndex:     ctx.operationIndex,
 		TradeIndex:         tradeIndex,
-		TradeType:          "orderbook",
+		TradeType:          tradeType,
 		TradeTimestamp:     ctx.closedAt,
 		SellerAccount:      sellerAccount,
 		SellingAssetCode:   sellingCode,
@@ -204,6 +224,7 @@ func tradeFromClaim(claim xdr.ClaimAtom, ctx tradeContext, tradeIndex int) (Trad
 		BuyingAssetIssuer:  buyingIssuer,
 		BuyingAmount:       buyingAmount,
 		Price:              fmt.Sprintf("%s/%s", buyingAmount, sellingAmount),
+		LiquidityPoolID:    liquidityPoolID,
 		CreatedAt:          ctx.closedAt,
 		LedgerRange:        ctx.ledgerRange,
 		EraID:              ctx.eraID,

@@ -4,11 +4,18 @@ import "time"
 
 // AccountData represents account snapshot state (accounts_snapshot_v1)
 type AccountData struct {
-	AccountID           string
-	LedgerSequence      uint32
-	ClosedAt            time.Time
-	Balance             string
-	SequenceNumber      uint64
+	AccountID      string
+	LedgerSequence uint32
+	ClosedAt       time.Time
+	Balance        string
+	SequenceNumber uint64
+	// SequenceLedger and SequenceTime come from AccountEntryExtensionV3
+	// (CAP-21): the ledger and close time at which the account's sequence
+	// number was last bumped. Both are zero on accounts whose sequence
+	// predates the extension, which is indistinguishable from "bumped at
+	// ledger 0" only because no such ledger exists.
+	SequenceLedger      uint32
+	SequenceTime        uint64
 	NumSubentries       uint32
 	NumSponsoring       uint32
 	NumSponsored        uint32

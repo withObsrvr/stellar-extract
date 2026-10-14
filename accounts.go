@@ -128,6 +128,12 @@ func extractAccountData(entry *xdr.AccountEntry, ledgerSeq uint32, closedAt time
 		}
 	}
 
+	// Sequence bump tracking (Protocol 19+, CAP-21). The SDK resolves the
+	// extension chain for us; both read zero on an account that has not been
+	// bumped since the extension was introduced.
+	sequenceLedger := uint32(entry.SeqLedger())
+	sequenceTime := uint64(entry.SeqTime())
+
 	now := time.Now().UTC()
 
 	return AccountData{
@@ -136,6 +142,8 @@ func extractAccountData(entry *xdr.AccountEntry, ledgerSeq uint32, closedAt time
 		ClosedAt:            closedAt,
 		Balance:             balance,
 		SequenceNumber:      sequenceNumber,
+		SequenceLedger:      sequenceLedger,
+		SequenceTime:        sequenceTime,
 		NumSubentries:       numSubentries,
 		NumSponsoring:       numSponsoring,
 		NumSponsored:        numSponsored,

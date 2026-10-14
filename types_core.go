@@ -185,10 +185,19 @@ type EffectData struct {
 
 // TradeData represents a single trade execution (DEX trades)
 type TradeData struct {
-	LedgerSequence     uint32
-	TransactionHash    string
-	OperationIndex     int
-	TradeIndex         int
+	LedgerSequence  uint32
+	TransactionHash string
+	OperationIndex  int
+	// TradeIndex is the position of the claim atom within the operation's
+	// claim list, not a running count of emitted rows. Positional indexing
+	// makes (transaction_hash, operation_index, trade_index) identify one
+	// claim atom in the XDR, and keeps that identity stable when the set of
+	// claims this library emits changes.
+	TradeIndex int
+	// TradeType is "orderbook" when the counterparty is a resting offer and
+	// "liquidity_pool" when it is an AMM pool. A pool trade has no
+	// counterparty account: SellerAccount is empty and LiquidityPoolID
+	// carries the pool instead.
 	TradeType          string
 	TradeTimestamp     time.Time
 	SellerAccount      string
@@ -200,7 +209,11 @@ type TradeData struct {
 	BuyingAssetIssuer  *string
 	BuyingAmount       string
 	Price              string
-	CreatedAt          time.Time
-	LedgerRange        uint32
-	EraID              *string
+	// LiquidityPoolID is the hex-encoded pool hash, non-nil exactly when
+	// TradeType is "liquidity_pool". Hex matches how this library already
+	// renders pool identifiers in liquidity_pools and in trade effects.
+	LiquidityPoolID *string
+	CreatedAt       time.Time
+	LedgerRange     uint32
+	EraID           *string
 }
