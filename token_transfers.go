@@ -28,6 +28,11 @@ func ExtractTokenTransfers(input *LedgerInput) ([]TokenTransferData, error) {
 
 	var transfers []TokenTransferData
 
+	// One counter per transaction, over the ledger's events in order. The
+	// list has no index of its own and no attribute combination identifies
+	// a transfer, so this is the row's identity.
+	eventIndexByTx := make(map[string]uint32)
+
 	for _, event := range events {
 		var from, to *string
 		var amount string
@@ -58,6 +63,8 @@ func ExtractTokenTransfers(input *LedgerInput) ([]TokenTransferData, error) {
 		amountFloat = amountFloat * 0.0000001
 
 		eventMeta := event.GetMeta()
+		eventIndex := eventIndexByTx[eventMeta.TxHash]
+		eventIndexByTx[eventMeta.TxHash] = eventIndex + 1
 		transactionID := toid.New(int32(input.Sequence), int32(eventMeta.TransactionIndex), 0).ToInt64()
 
 		var operationID *int64
@@ -77,6 +84,7 @@ func ExtractTokenTransfers(input *LedgerInput) ([]TokenTransferData, error) {
 			TransactionID:   transactionID,
 			OperationID:     operationID,
 			OperationIndex:  operationIndex,
+			EventIndex:      eventIndex,
 			EventType:       event.GetEventType(),
 			From:            from,
 			To:              to,

@@ -23,10 +23,17 @@ type ContractEventData struct {
 	Topic2Decoded            *string
 	Topic3Decoded            *string
 	OperationIndex           uint32
-	EventIndex               uint32
-	CreatedAt                time.Time
-	LedgerRange              uint32
-	EraID                    *string
+	// EventStream names which of a transaction's three event lists this row
+	// came from: "diagnostic", "operation" or "transaction". Without it
+	// OperationIndex is ambiguous — only operation events have a real one.
+	EventStream string
+	// EventIndex is the row's position within its transaction, counted
+	// across all three streams. It is unique per transaction, which is what
+	// makes (ledger_sequence, transaction_hash, event_index) a key.
+	EventIndex  uint32
+	CreatedAt   time.Time
+	LedgerRange uint32
+	EraID       *string
 }
 
 // ContractDataData represents Soroban contract data snapshot (contract_data_snapshot_v1)
