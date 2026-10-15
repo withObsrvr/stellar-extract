@@ -3,13 +3,11 @@ package extract
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/amount"
-	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -18,25 +16,16 @@ import (
 func ExtractAccounts(input *LedgerInput) ([]AccountData, error) {
 	var accounts []AccountData
 
-	reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for accounts: %v", err)
 		return accounts, nil
 	}
-	defer reader.Close()
 
 	// Map-based deduplication: same account can change multiple times per ledger
 	accountMap := make(map[string]*AccountData)
 
-	for {
-		change, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for accounts: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeAccount {
 			continue
@@ -169,25 +158,16 @@ func extractAccountData(entry *xdr.AccountEntry, ledgerSeq uint32, closedAt time
 func ExtractTrustlines(input *LedgerInput) ([]TrustlineData, error) {
 	var trustlines []TrustlineData
 
-	reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for trustlines: %v", err)
 		return trustlines, nil
 	}
-	defer reader.Close()
 
 	// Key: accountID:assetCode:assetIssuer
 	trustlineMap := make(map[string]*TrustlineData)
 
-	for {
-		change, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for trustlines: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeTrustline {
 			continue
@@ -282,25 +262,16 @@ func extractTrustlineData(entry *xdr.TrustLineEntry, ledgerSeq uint32, ledgerRan
 func ExtractAccountSigners(input *LedgerInput) ([]AccountSignerData, error) {
 	var signersList []AccountSignerData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for account signers: %v", err)
 		return signersList, nil
 	}
-	defer changeReader.Close()
 
 	// Map-based deduplication: key is "accountID:signerKey"
 	signerMap := make(map[string]*AccountSignerData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for account signers: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		var accountEntry *xdr.AccountEntry
 		var deleted bool
@@ -372,25 +343,16 @@ func ExtractAccountSigners(input *LedgerInput) ([]AccountSignerData, error) {
 func ExtractNativeBalances(input *LedgerInput) ([]NativeBalanceData, error) {
 	var nativeBalancesList []NativeBalanceData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for native balances: %v", err)
 		return nativeBalancesList, nil
 	}
-	defer changeReader.Close()
 
 	// Track unique native balances by account_id (deduplicate within ledger)
 	nativeBalancesMap := make(map[string]*NativeBalanceData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for native balances: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeAccount {
 			continue

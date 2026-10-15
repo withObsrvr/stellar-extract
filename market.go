@@ -3,13 +3,11 @@ package extract
 import (
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -18,24 +16,15 @@ import (
 func ExtractOffers(input *LedgerInput) ([]OfferData, error) {
 	var offers []OfferData
 
-	reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for offers: %v", err)
 		return offers, nil
 	}
-	defer reader.Close()
 
 	offerMap := make(map[int64]*OfferData)
 
-	for {
-		change, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for offers: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeOffer {
 			continue
@@ -135,24 +124,15 @@ func parseAsset(asset xdr.Asset) (assetType string, code *string, issuer *string
 func ExtractClaimableBalances(input *LedgerInput) ([]ClaimableBalanceData, error) {
 	var balances []ClaimableBalanceData
 
-	reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for claimable balances: %v", err)
 		return balances, nil
 	}
-	defer reader.Close()
 
 	balanceMap := make(map[string]*ClaimableBalanceData)
 
-	for {
-		change, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for claimable balances: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeClaimableBalance {
 			continue
@@ -225,24 +205,15 @@ func ExtractClaimableBalances(input *LedgerInput) ([]ClaimableBalanceData, error
 func ExtractLiquidityPools(input *LedgerInput) ([]LiquidityPoolData, error) {
 	var pools []LiquidityPoolData
 
-	reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for liquidity pools: %v", err)
 		return pools, nil
 	}
-	defer reader.Close()
 
 	poolMap := make(map[string]*LiquidityPoolData)
 
-	for {
-		change, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for liquidity pools: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.Type != xdr.LedgerEntryTypeLiquidityPool {
 			continue

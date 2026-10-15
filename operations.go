@@ -4,40 +4,28 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
 	"strings"
 
-	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/toid"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // ExtractOperations extracts operation data from a pre-decoded ledger.
 func ExtractOperations(input *LedgerInput) ([]OperationData, error) {
-	lcm := input.LCM
 	ledgerSeq := input.Sequence
 	closedAt := input.ClosedAt
 	ledgerRange := input.LedgerRange
 
 	var operations []OperationData
 
-	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, lcm)
+	txs, err := input.Transactions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transaction reader: %w", err)
+		return nil, fmt.Errorf("failed to read transactions: %w", err)
 	}
-	defer reader.Close()
 
 	var txIndex int32 = 1 // 1-indexed per TOID convention
-	for {
-		tx, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading transaction for operations in ledger %d: %v", ledgerSeq, err)
-			continue
-		}
+	for _, tx := range txs {
 
 		txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
 		txSuccessful := tx.Result.Successful()

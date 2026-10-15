@@ -3,7 +3,6 @@ package extract
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"io"
 	"log"
 	"time"
 
@@ -21,24 +20,15 @@ import (
 func ExtractConfigSettings(input *LedgerInput) ([]ConfigSettingData, error) {
 	var configSettingsList []ConfigSettingData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create ledger change reader for config settings: %v", err)
 		return configSettingsList, nil
 	}
-	defer changeReader.Close()
 
 	configSettingsMap := make(map[int32]*ConfigSettingData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading ledger change for config settings: %v", err)
-			continue
-		}
+	for _, change := range changes {
 		if !isConfigSettingChange(change) {
 			continue
 		}
@@ -179,24 +169,15 @@ func encodeConfigSettingXDR(entry *xdr.ConfigSettingEntry) string {
 func ExtractTTL(input *LedgerInput) ([]TTLData, error) {
 	var ttlList []TTLData
 
-	txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	txs, err := input.Transactions()
 	if err != nil {
-		log.Printf("Failed to create transaction reader for TTL: %v", err)
+		log.Printf("Failed to read transactions for TTL: %v", err)
 		return ttlList, nil
 	}
-	defer txReader.Close()
 
 	ttlMap := make(map[string]*TTLData)
 
-	for {
-		tx, err := txReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading transaction for TTL: %v", err)
-			continue
-		}
+	for _, tx := range txs {
 
 		changes, err := tx.GetChanges()
 		if err != nil {

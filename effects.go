@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"reflect"
 	"sort"
 	"strconv"
@@ -973,23 +971,14 @@ func (e *efx) addLPLifecycleEffects(change ingest.Change) {
 // ExtractEffects extracts effect data from a ledger.
 // Covers all 50+ Stellar effect types across all operation types.
 func ExtractEffects(input *LedgerInput) ([]EffectData, error) {
-	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	txs, err := input.Transactions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transaction reader: %w", err)
+		return nil, fmt.Errorf("failed to read transactions: %w", err)
 	}
-	defer reader.Close()
 
 	var allEffects []EffectData
 
-	for {
-		tx, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading transaction for effects in ledger %d: %v", input.Sequence, err)
-			continue
-		}
+	for _, tx := range txs {
 
 		if !tx.Result.Successful() {
 			continue
