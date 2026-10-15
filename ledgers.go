@@ -54,26 +54,33 @@ func ExtractLedgers(input *LedgerInput) ([]LedgerRowData, error) {
 	var txCount uint32
 	var failedCount uint32
 	var operationCount uint32
-	var txSetOperationCount uint32
+
+	// tx_set_operation_count is the operations the transaction *set*
+	// declared, so it is counted from the envelopes rather than from
+	// operation results.
+	//
+	// Counting results undercounts: a transaction rejected before its
+	// operations run -- txBAD_SEQ, txINSUFFICIENT_FEE, txNO_ACCOUNT and the
+	// rest -- is in the set and declares operations, but OperationResults()
+	// reports no results for it, so every operation it declared went
+	// missing from the total. The ledger's own capacity accounting is
+	// against what was declared.
+	txSetOperationCount := countEnvelopeOperations(lcm.TransactionEnvelopes())
 
 	switch lcm.V {
 	case 0:
 		v0 := lcm.MustV0()
 		txCount = uint32(len(v0.TxSet.Txs))
 		for _, tx := range v0.TxSet.Txs {
-			opCount := uint32(len(tx.Operations()))
-			txSetOperationCount += opCount
-			operationCount += opCount
+			operationCount += uint32(len(tx.Operations()))
 		}
 	case 1:
 		v1 := lcm.MustV1()
 		txCount = uint32(len(v1.TxProcessing))
 		for _, txApply := range v1.TxProcessing {
 			if opResults, ok := txApply.Result.Result.OperationResults(); ok {
-				opCount := uint32(len(opResults))
-				txSetOperationCount += opCount
 				if txApply.Result.Result.Successful() {
-					operationCount += opCount
+					operationCount += uint32(len(opResults))
 				} else {
 					failedCount++
 				}
@@ -86,10 +93,8 @@ func ExtractLedgers(input *LedgerInput) ([]LedgerRowData, error) {
 		txCount = uint32(len(v2.TxProcessing))
 		for _, txApply := range v2.TxProcessing {
 			if opResults, ok := txApply.Result.Result.OperationResults(); ok {
-				opCount := uint32(len(opResults))
-				txSetOperationCount += opCount
 				if txApply.Result.Result.Successful() {
-					operationCount += opCount
+					operationCount += uint32(len(opResults))
 				} else {
 					failedCount++
 				}
@@ -227,4 +232,14 @@ func countLedgerContractEvents(meta *xdr.TransactionMeta) int32 {
 		return count
 	}
 	return 0
+}
+
+// countEnvelopeOperations totals the operations every envelope in the
+// transaction set declares, including those of transactions that failed.
+func countEnvelopeOperations(envelopes []xdr.TransactionEnvelope) uint32 {
+	var count uint32
+	for _, envelope := range envelopes {
+		count += uint32(len(envelope.Operations()))
+	}
+	return count
 }
