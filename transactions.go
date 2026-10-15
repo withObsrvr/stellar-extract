@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/toid"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -81,10 +83,19 @@ func ExtractTransactions(input *LedgerInput) ([]TransactionData, error) {
 			memoType := "none"
 			txData.MemoType = &memoType
 		case xdr.MemoTypeMemoText:
+			// MemoText is opaque bytes and need not be valid UTF-8, which a
+			// Parquet string column and a Postgres TEXT column both reject.
+			// The raw bytes go to MemoRaw and are authoritative; Memo carries
+			// the text only when it genuinely is text.
 			memoType := "text"
 			txData.MemoType = &memoType
 			if text, ok := memo.GetText(); ok {
-				txData.Memo = &text
+				raw := base64.StdEncoding.EncodeToString([]byte(text))
+				txData.MemoRaw = &raw
+				if utf8.ValidString(text) {
+					memoText := text
+					txData.Memo = &memoText
+				}
 			}
 		case xdr.MemoTypeMemoId:
 			memoType := "id"
@@ -153,6 +164,10 @@ func ExtractTransactions(input *LedgerInput) ([]TransactionData, error) {
 		if errorType, errorCode, ok := contractErrorFacts(tx); ok {
 			txData.ContractErrorType = &errorType
 			txData.ContractErrorCode = errorCode
+		}
+
+		if err := populateTransactionXDRFields(tx, &txData); err != nil {
+			return nil, fmt.Errorf("transaction %s: %w", txData.TransactionHash, err)
 		}
 
 		// Compute TOID
@@ -365,4 +380,67 @@ func extractContractInvocationDetails(op xdr.Operation) (*string, *string, *stri
 	}
 
 	return contractID, functionName, argsStr, nil
+}
+
+// populateTransactionXDRFields records the raw envelope, result, meta, fee
+// meta and signatures so a Bronze row can be reprocessed without re-reading
+// the archive.
+func populateTransactionXDRFields(tx ingest.LedgerTransaction, txData *TransactionData) error {
+	envelopeBase64, err := xdr.MarshalBase64(tx.Envelope)
+	if err != nil {
+		return fmt.Errorf("marshal envelope: %w", err)
+	}
+	envelopeSize, err := decodedBase64Length(envelopeBase64)
+	if err != nil {
+		return fmt.Errorf("size envelope: %w", err)
+	}
+	resultBase64, err := xdr.MarshalBase64(&tx.Result.Result)
+	if err != nil {
+		return fmt.Errorf("marshal result: %w", err)
+	}
+	metaBase64, err := xdr.MarshalBase64(tx.UnsafeMeta)
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+	feeMetaBase64, err := xdr.MarshalBase64(tx.FeeChanges)
+	if err != nil {
+		return fmt.Errorf("marshal fee meta: %w", err)
+	}
+	signersJSON, err := marshalDecoratedSignatures(tx.Envelope.Signatures())
+	if err != nil {
+		return fmt.Errorf("marshal signatures: %w", err)
+	}
+
+	txData.EnvelopeSizeBytes = envelopeSize
+	txData.TxEnvelope = &envelopeBase64
+	txData.TxResult = &resultBase64
+	txData.TxMeta = &metaBase64
+	txData.TxFeeMeta = &feeMetaBase64
+	txData.TxSigners = &signersJSON
+	return nil
+}
+
+// marshalDecoratedSignatures renders the signature list as a JSON array of
+// base64 signatures, in envelope order. The hint is omitted: it is derivable
+// from the signing key and is not what a consumer reconstructs.
+func marshalDecoratedSignatures(signatures []xdr.DecoratedSignature) (string, error) {
+	out := make([]string, len(signatures))
+	for i, sig := range signatures {
+		out[i] = base64.StdEncoding.EncodeToString(sig.Signature)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// decodedBase64Length reports the size of the encoded value's decoded bytes,
+// which is the size the protocol charges against, not the base64 length.
+func decodedBase64Length(encoded string) (int, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return 0, err
+	}
+	return len(raw), nil
 }
