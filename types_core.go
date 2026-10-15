@@ -80,6 +80,38 @@ type TransactionData struct {
 	// ScError. Successful transactions and classic failures leave it nil.
 	ContractErrorType *string
 	ContractErrorCode *int32
+	// Fee-bump wrapper. Non-nil only on a FEE_BUMP envelope, where an outer
+	// transaction pays for an inner one. MaxFee above stays the inner bid,
+	// which is what TransactionEnvelope.Fee() reports for a fee bump.
+	FeeBumpFee           *int64
+	InnerTransactionHash *string
+	InnerSourceAccount   *string
+	// FeeAccountMuxed is the M-address of the fee source, non-nil only when
+	// that source is muxed.
+	FeeAccountMuxed *string
+
+	// Preconditions (CAP-0021). Each is non-nil only when the transaction
+	// declares it: "no minimum sequence number" and "minimum sequence
+	// number zero" are different, so an undeclared precondition is nil
+	// rather than zero.
+	LedgerboundsMin   *int64
+	LedgerboundsMax   *int64
+	MinSequenceNumber *int64
+	MinSequenceAge    *int64
+	// ExtraSigners is a JSON array of strkey signer keys in declared order,
+	// nil when none are declared.
+	ExtraSigners *string
+
+	// Declared Soroban resources, from the envelope. These are what the
+	// transaction asked for, not what it was charged -- the protocol meters
+	// ledger capacity against the declaration.
+	SorobanDataSizeBytes *int32
+	SorobanDataResources *string
+	// SorobanContractEventsCount counts the contract events in the
+	// transaction's Soroban meta. Distinct from the contract_events table's
+	// row count for the transaction, which also carries diagnostic events.
+	SorobanContractEventsCount *int32
+
 	// Raw XDR, base64-encoded, and the signature list. These are what makes
 	// a Bronze transaction row reprocessable without going back to the
 	// archive: every derived column above can be recomputed from TxEnvelope,
