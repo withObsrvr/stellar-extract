@@ -14,18 +14,29 @@ import (
 func ExtractEvictedKeys(input *LedgerInput) ([]EvictedKeyData, error) {
 	var evictedKeysList []EvictedKeyData
 
-	// Only LedgerCloseMetaV2 has evicted keys tracking
-	if input.LCM.V != 2 {
+	// Both LedgerCloseMetaV1 and V2 carry EvictedKeys; V0 predates state
+	// archival and has no such field.
+	//
+	// This used to read V2 only, so evictions on a V1 ledger were dropped
+	// with no error — a whole arm of the union ignored, which is the
+	// failure mode docs/SDK_UPGRADES.md is written about. No V1 ledger in
+	// the pubnet fixture corpus actually carries evictions, so the loss was
+	// latent rather than observed, and neither consuming ingester could
+	// have noticed: both read this function, so both were empty and agreed.
+	var evictedKeys []xdr.LedgerKey
+	switch input.LCM.V {
+	case 1:
+		evictedKeys = input.LCM.MustV1().EvictedKeys
+	case 2:
+		evictedKeys = input.LCM.MustV2().EvictedKeys
+	default:
 		return evictedKeysList, nil
 	}
-
-	v2Meta := input.LCM.MustV2()
 
 	// Track unique evicted keys by hash (deduplicate within ledger)
 	evictedKeysMap := make(map[string]*EvictedKeyData)
 
-	// Process evicted keys from V2 meta
-	for _, evictedKey := range v2Meta.EvictedKeys {
+	for _, evictedKey := range evictedKeys {
 		// Determine durability based on key type
 		durability := "unknown"
 
