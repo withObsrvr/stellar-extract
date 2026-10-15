@@ -48,13 +48,20 @@ type TransactionData struct {
 	OperationCount        int
 	MemoType              *string
 	Memo                  *string
-	CreatedAt             time.Time
-	AccountSequence       int64
-	LedgerRange           uint32
-	SignaturesCount       int
-	NewAccount            bool
-	TimeboundsMinTime     *int64
-	TimeboundsMaxTime     *int64
+	// MemoRaw is base64 of the raw memo bytes, set for text memos only and
+	// authoritative when set. A MEMO_TEXT payload is opaque bytes that need
+	// not be valid UTF-8, so Memo carries the text only when it genuinely is
+	// text and is NULL otherwise — a value the producer cannot represent is
+	// absent, not mangled. id, hash and return memos are already lossless as
+	// decimal and hex, so MemoRaw stays nil for them.
+	MemoRaw           *string
+	CreatedAt         time.Time
+	AccountSequence   int64
+	LedgerRange       uint32
+	SignaturesCount   int
+	NewAccount        bool
+	TimeboundsMinTime *int64
+	TimeboundsMaxTime *int64
 	// Soroban fields
 	SorobanHostFunctionType *string
 	SorobanContractID       *string
@@ -73,6 +80,19 @@ type TransactionData struct {
 	// ScError. Successful transactions and classic failures leave it nil.
 	ContractErrorType *string
 	ContractErrorCode *int32
+	// Raw XDR, base64-encoded, and the signature list. These are what makes
+	// a Bronze transaction row reprocessable without going back to the
+	// archive: every derived column above can be recomputed from TxEnvelope,
+	// TxResult and TxMeta. Horizon exposes the same five.
+	TxEnvelope *string
+	TxResult   *string
+	TxMeta     *string
+	TxFeeMeta  *string
+	// TxSigners is a JSON array of base64 signatures, in envelope order.
+	TxSigners *string
+	// EnvelopeSizeBytes is the length of the decoded envelope XDR, not of its
+	// base64 encoding — the size the protocol charges against.
+	EnvelopeSizeBytes int
 	// TOID
 	TransactionID int64
 	EraID         *string
