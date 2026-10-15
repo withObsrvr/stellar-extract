@@ -9,8 +9,11 @@ package extract
 
 import (
 	"fmt"
+	"io"
 	"sync"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/ingest"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -23,6 +26,85 @@ type LedgerInput struct {
 	ClosedAt          time.Time
 	LedgerRange       uint32  // partition key, typically floor(sequence / 10000)
 	EraID             *string // optional DuckLake era identifier
+
+	// Decoded transactions, shared by every extractor that needs them.
+	// See Transactions.
+	transactionsOnce sync.Once
+	transactions     []ingest.LedgerTransaction
+	transactionsErr  error
+
+	// Decoded entry changes, shared the same way. See Changes.
+	changesOnce sync.Once
+	changes     []ingest.Change
+	changesErr  error
+}
+
+// Transactions returns the ledger's transactions in apply order, decoding
+// them at most once per LedgerInput.
+//
+// Seven extractors need the transaction stream, and each used to open its
+// own ingest.LedgerTransactionReader — seven full walks of the same ledger
+// per ExtractAll, on top of eleven more for the change stream. The walk is
+// the expensive part, so it happens once and the result is shared.
+//
+// The returned slice is shared, not copied: callers read it and must not
+// mutate it. A decode failure is remembered too, so a broken ledger fails
+// the same way for every caller instead of being retried six more times.
+func (input *LedgerInput) Transactions() ([]ingest.LedgerTransaction, error) {
+	input.transactionsOnce.Do(func() {
+		reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+		if err != nil {
+			input.transactionsErr = fmt.Errorf("create transaction reader: %w", err)
+			return
+		}
+		defer reader.Close()
+
+		for {
+			tx, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				input.transactionsErr = fmt.Errorf("read transaction: %w", err)
+				return
+			}
+			input.transactions = append(input.transactions, tx)
+		}
+	})
+	return input.transactions, input.transactionsErr
+}
+
+// Changes returns the ledger's entry changes in order, reading them at most
+// once per LedgerInput.
+//
+// Eleven extractors need the change stream — the snapshot tables, plus TTL
+// and the Soroban state tables — and each used to open its own
+// ingest.LedgerChangeReader. Same reasoning as Transactions: the walk is
+// the cost, so it happens once.
+//
+// The returned slice is shared, not copied.
+func (input *LedgerInput) Changes() ([]ingest.Change, error) {
+	input.changesOnce.Do(func() {
+		reader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+		if err != nil {
+			input.changesErr = fmt.Errorf("create change reader: %w", err)
+			return
+		}
+		defer reader.Close()
+
+		for {
+			change, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				input.changesErr = fmt.Errorf("read change: %w", err)
+				return
+			}
+			input.changes = append(input.changes, change)
+		}
+	})
+	return input.changes, input.changesErr
 }
 
 // NewLedgerInput creates a LedgerInput from an already-decoded LedgerCloseMeta.

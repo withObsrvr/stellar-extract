@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
 	"time"
@@ -35,22 +34,13 @@ const (
 func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 	var events []ContractEventData
 
-	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	txs, err := input.Transactions()
 	if err != nil {
-		log.Printf("Failed to create transaction reader for contract events: %v", err)
+		log.Printf("Failed to read transactions for contract events: %v", err)
 		return events, nil
 	}
-	defer reader.Close()
 
-	for {
-		tx, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading transaction for contract events: %v", err)
-			continue
-		}
+	for _, tx := range txs {
 
 		txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
 		txSuccessful := tx.Result.Successful()
@@ -403,25 +393,16 @@ func flattenTopicValue(decoded interface{}) *string {
 func ExtractContractData(input *LedgerInput) ([]ContractDataData, error) {
 	var contractDataList []ContractDataData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for contract data: %v", err)
 		return contractDataList, nil
 	}
-	defer changeReader.Close()
 
 	// Track unique contract data by key (deduplicate within ledger)
 	contractMap := make(map[string]*ContractDataData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for contract data: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if !isContractDataChange(change) {
 			continue
@@ -679,24 +660,15 @@ var _ = (*big.Int)(nil)
 func ExtractContractCode(input *LedgerInput) ([]ContractCodeData, error) {
 	var contractCodeList []ContractCodeData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create change reader for contract code: %v", err)
 		return contractCodeList, nil
 	}
-	defer changeReader.Close()
 
 	contractCodeMap := make(map[string]*ContractCodeData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading change for contract code: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if !isContractCodeChange(change) {
 			continue
@@ -917,24 +889,15 @@ func decodeLEB128(data []byte) (int64, int) {
 func ExtractRestoredKeys(input *LedgerInput) ([]RestoredKeyData, error) {
 	var restoredKeysList []RestoredKeyData
 
-	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	changes, err := input.Changes()
 	if err != nil {
 		log.Printf("Failed to create ledger change reader for restored keys: %v", err)
 		return restoredKeysList, nil
 	}
-	defer changeReader.Close()
 
 	restoredKeysMap := make(map[string]*RestoredKeyData)
 
-	for {
-		change, err := changeReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading ledger change for restored keys: %v", err)
-			continue
-		}
+	for _, change := range changes {
 
 		if change.ChangeType != xdr.LedgerEntryChangeTypeLedgerEntryRestored {
 			continue
@@ -1065,20 +1028,12 @@ func extractRestoredKeyData(ledgerKey xdr.LedgerKey, ledgerSeq uint32, ledgerRan
 func ExtractContractCreations(input *LedgerInput) ([]ContractCreationData, error) {
 	var creations []ContractCreationData
 
-	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, input.LCM)
+	txs, err := input.Transactions()
 	if err != nil {
 		return creations, nil
 	}
-	defer reader.Close()
 
-	for {
-		tx, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			continue
-		}
+	for _, tx := range txs {
 
 		if !tx.Result.Successful() {
 			continue

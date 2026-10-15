@@ -3,41 +3,28 @@ package extract
 import (
 	"encoding/hex"
 	"fmt"
-	"io"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/amount"
-	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // ExtractTrades extracts trades from a pre-decoded ledger.
 // Extracts trade data from MANAGE_SELL_OFFER, MANAGE_BUY_OFFER, and CREATE_PASSIVE_SELL_OFFER operations.
 func ExtractTrades(input *LedgerInput) ([]TradeData, error) {
-	lcm := input.LCM
 	ledgerSeq := input.Sequence
 	closedAt := input.ClosedAt
 	ledgerRange := input.LedgerRange
 
 	var trades []TradeData
 
-	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(input.NetworkPassphrase, lcm)
+	txs, err := input.Transactions()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transaction reader: %w", err)
+		return nil, fmt.Errorf("failed to read transactions: %w", err)
 	}
-	defer reader.Close()
 
-	for {
-		tx, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading transaction for trades in ledger %d: %v", ledgerSeq, err)
-			continue
-		}
+	for _, tx := range txs {
 
 		if !tx.Result.Successful() {
 			continue // Only process successful transactions
