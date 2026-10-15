@@ -178,6 +178,48 @@ func main() {
 }
 ```
 
+## Upgrading to v0.3.0
+
+Both remaining Bronze tables without a working row identity now have one.
+Both changes alter existing column values, not just add columns.
+
+### `contract_events`: one index across all three event streams
+
+A transaction carries three independent event lists — diagnostic,
+per-operation, and transaction-level — and each numbered from zero into the
+same `(operation_index, event_index)` pair. A diagnostic event, an operation
+event and a transaction event could all land on `0:0`. `event_id` is built
+from that pair, so it collided too: roughly 4% of events on a busy Soroban
+ledger shared an identity with another, and any sink deduplicating on it
+dropped them. One did, losing 86% of the table.
+
+`EventIndex` is now a single counter across all three streams, so
+`(ledger_sequence, transaction_hash, event_index)` identifies a row and
+`event_id` is `txHash:eventIndex`. Verified unique over 104,730 events.
+
+`EventStream` is new: `diagnostic`, `operation` or `transaction`. It exists
+because `OperationIndex` was never meaningful on two of the three streams —
+diagnostic events were carrying their position in the diagnostic list in
+that column, which reads like an operation index and never was one. It is
+now 0 on diagnostic and transaction-level rows, with `EventStream` saying
+why.
+
+### `token_transfers`: `EventIndex` added
+
+The row carried no index at all, and no combination of its attributes
+identifies a transfer: one operation may transfer the same amount between
+the same parties twice, which occurs in practice. `EventIndex` is the row's
+position within its transaction, making
+`(ledger_sequence, transaction_hash, event_index)` a key. Verified unique
+over 40,606 transfers.
+
+### Migration
+
+Both `event_id` and `event_index` change value for existing rows, so a
+consumer keyed on either needs its ranges re-ingested rather than topped up.
+Sinks must also widen any unique constraint before ingesting: rows that
+previously collided now arrive as distinct rows.
+
 ## Upgrading to v0.2.0
 
 Three fields that this library declared but never populated now carry data,

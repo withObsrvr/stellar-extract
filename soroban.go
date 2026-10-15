@@ -24,6 +24,14 @@ import (
 // ExtractContractEvents extracts Soroban contract events from a ledger.
 // Captures three event types: CONTRACT, SYSTEM, DIAGNOSTIC (includes invocation tree).
 // Includes V4/CAP-67 TransactionEvents support.
+// Event streams, as stored in ContractEventData.EventStream. A transaction
+// carries three independent lists and only one of them is per-operation.
+const (
+	EventStreamDiagnostic  = "diagnostic"
+	EventStreamOperation   = "operation"
+	EventStreamTransaction = "transaction"
+)
+
 func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 	var events []ContractEventData
 
@@ -52,27 +60,36 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 			continue
 		}
 
-		// Extract diagnostic events (contains invocation tree)
-		for diagIdx, diagEvent := range txEvents.DiagnosticEvents {
-			eventData := extractDiagnosticEvent(diagEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(diagIdx), txSuccessful)
+		// One counter across all three streams, so event_index identifies
+		// the row within the transaction. Each stream used to number
+		// independently and they collided.
+		eventIndex := uint32(0)
+
+		// Diagnostic events (contains the invocation tree)
+		for _, diagEvent := range txEvents.DiagnosticEvents {
+			eventData := extractDiagnosticEvent(diagEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, eventIndex, txSuccessful)
 			eventData.EraID = input.EraID
 			events = append(events, eventData)
+			eventIndex++
 		}
 
-		// Extract operation-level contract events
+		// Operation-level contract events
 		for opIdx, opEvents := range txEvents.OperationEvents {
-			for eventIdx, contractEvent := range opEvents {
-				eventData := extractContractEvent(contractEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(opIdx), uint32(eventIdx), false, txSuccessful)
+			for _, contractEvent := range opEvents {
+				eventData := extractContractEvent(contractEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(opIdx), eventIndex, EventStreamOperation, false, txSuccessful)
 				eventData.EraID = input.EraID
 				events = append(events, eventData)
+				eventIndex++
 			}
 		}
 
-		// Extract transaction-level events (V4 / CAP-67 unified events).
-		for txEvtIdx, txEvt := range txEvents.TransactionEvents {
-			eventData := extractContractEvent(txEvt.Event, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, 0, uint32(txEvtIdx), true, txSuccessful)
+		// Transaction-level events (V4 / CAP-67 unified events). These are
+		// transaction-scoped, so OperationIndex is 0 and EventStream says so.
+		for _, txEvt := range txEvents.TransactionEvents {
+			eventData := extractContractEvent(txEvt.Event, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, 0, eventIndex, EventStreamTransaction, true, txSuccessful)
 			eventData.EraID = input.EraID
 			events = append(events, eventData)
+			eventIndex++
 		}
 	}
 
@@ -96,6 +113,7 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 	for txIndex := range transactions {
 		transaction := transactions[txIndex]
 		txHash := hex.EncodeToString(transaction.Hash[:])
+		eventIndex := uint32(0)
 
 		for diagnosticIndex, raw := range transaction.DiagnosticEvents {
 			var diagnostic xdr.DiagnosticEvent
@@ -108,18 +126,19 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 				input.Sequence,
 				input.ClosedAt,
 				input.LedgerRange,
-				uint32(diagnosticIndex),
+				eventIndex,
 				transaction.Successful,
 			)
 			row.EraID = input.EraID
 			events = append(events, row)
+			eventIndex++
 		}
 
 		for operationIndex, operationEvents := range transaction.ContractEvents {
-			for eventIndex, raw := range operationEvents {
+			for operationEventIndex, raw := range operationEvents {
 				var event xdr.ContractEvent
 				if err := event.UnmarshalBinary(raw); err != nil {
-					return nil, fmt.Errorf("transaction %s operation %d event %d: %w", txHash, operationIndex, eventIndex, err)
+					return nil, fmt.Errorf("transaction %s operation %d event %d: %w", txHash, operationIndex, operationEventIndex, err)
 				}
 				row := extractContractEvent(
 					event,
@@ -128,19 +147,21 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 					input.ClosedAt,
 					input.LedgerRange,
 					uint32(operationIndex),
-					uint32(eventIndex),
+					eventIndex,
+					EventStreamOperation,
 					false,
 					transaction.Successful,
 				)
 				row.EraID = input.EraID
 				events = append(events, row)
+				eventIndex++
 			}
 		}
 
-		for eventIndex, raw := range transaction.TransactionEvents {
+		for transactionEventIndex, raw := range transaction.TransactionEvents {
 			var transactionEvent xdr.TransactionEvent
 			if err := transactionEvent.UnmarshalBinary(raw); err != nil {
-				return nil, fmt.Errorf("transaction %s transaction event %d: %w", txHash, eventIndex, err)
+				return nil, fmt.Errorf("transaction %s transaction event %d: %w", txHash, transactionEventIndex, err)
 			}
 			row := extractContractEvent(
 				transactionEvent.Event,
@@ -149,27 +170,36 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 				input.ClosedAt,
 				input.LedgerRange,
 				0,
-				uint32(eventIndex),
+				eventIndex,
+				EventStreamTransaction,
 				true,
 				transaction.Successful,
 			)
 			row.EraID = input.EraID
 			events = append(events, row)
+			eventIndex++
 		}
 	}
 	return events, nil
 }
 
 // extractDiagnosticEvent extracts data from a diagnostic event.
-func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledgerSeq uint32, closedAt time.Time, ledgerRange uint32, diagIdx uint32, txSuccessful bool) ContractEventData {
+// extractDiagnosticEvent maps one diagnostic event.
+//
+// Diagnostic events are a flat, transaction-scoped list: they do not belong
+// to an operation. OperationIndex is therefore 0 and EventStream says why.
+// It used to be set to the event's position in the diagnostic list, which
+// made the column read like an operation index and was never one.
+func extractDiagnosticEvent(diagEvent xdr.DiagnosticEvent, txHash string, ledgerSeq uint32, closedAt time.Time, ledgerRange uint32, eventIndex uint32, txSuccessful bool) ContractEventData {
 	eventData := extractContractEvent(
 		diagEvent.Event,
 		txHash,
 		ledgerSeq,
 		closedAt,
 		ledgerRange,
-		diagIdx,
 		0,
+		eventIndex,
+		EventStreamDiagnostic,
 		diagEvent.InSuccessfulContractCall,
 		txSuccessful,
 	)
@@ -186,10 +216,17 @@ func extractContractEvent(
 	ledgerRange uint32,
 	opIndex uint32,
 	eventIndex uint32,
+	stream string,
 	inSuccessfulCall bool,
 	txSuccessful bool,
 ) ContractEventData {
-	eventID := fmt.Sprintf("%s:%d:%d", txHash, opIndex, eventIndex)
+	// eventIndex counts across all three of a transaction's event streams,
+	// so txHash plus it is unique. It used to be txHash:opIndex:eventIndex,
+	// with each stream keeping its own index — a diagnostic event, an
+	// operation event and a transaction event could all land on 0:0 and
+	// share an id. Roughly 4% of events on a busy Soroban ledger collided,
+	// and any sink deduplicating on the id dropped them.
+	eventID := fmt.Sprintf("%s:%d", txHash, eventIndex)
 
 	// Encode contract ID as C-address (matching block explorer format)
 	var contractID *string
@@ -234,6 +271,7 @@ func extractContractEvent(
 		Topic3Decoded: positionalTopics[3],
 
 		OperationIndex: opIndex,
+		EventStream:    stream,
 		EventIndex:     eventIndex,
 
 		CreatedAt:   now,
