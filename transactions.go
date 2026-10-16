@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
+	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/toid"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -167,6 +168,13 @@ func ExtractTransactions(input *LedgerInput) ([]TransactionData, error) {
 		}
 
 		if err := populateTransactionXDRFields(tx, &txData); err != nil {
+			return nil, fmt.Errorf("transaction %s: %w", txData.TransactionHash, err)
+		}
+		if err := populateFeeBumpFields(tx, input.NetworkPassphrase, &txData); err != nil {
+			return nil, fmt.Errorf("transaction %s: %w", txData.TransactionHash, err)
+		}
+		populatePreconditionFields(tx, &txData)
+		if err := populateSorobanDeclaredFields(tx, &txData); err != nil {
 			return nil, fmt.Errorf("transaction %s: %w", txData.TransactionHash, err)
 		}
 
@@ -443,4 +451,142 @@ func decodedBase64Length(encoded string) (int, error) {
 		return 0, err
 	}
 	return len(raw), nil
+}
+
+// populateFeeBumpFields records the outer half of a FEE_BUMP envelope.
+//
+// For a fee bump the envelope carries two transactions, and the columns the
+// rest of this type exposes describe the inner one: SourceAccount, MaxFee
+// and the operations are all the inner transaction's, because
+// TransactionEnvelope resolves them that way. Without these, a fee-bumped
+// transaction is indistinguishable from one the source paid for itself, and
+// who actually paid is not recoverable.
+func populateFeeBumpFields(tx ingest.LedgerTransaction, passphrase string, txData *TransactionData) error {
+	fb, ok := tx.Envelope.GetFeeBump()
+	if !ok {
+		return nil
+	}
+
+	fee := int64(fb.Tx.Fee)
+	txData.FeeBumpFee = &fee
+
+	if muxed := getMuxedAddress(tx.Envelope.FeeAccount()); muxed != nil {
+		txData.FeeAccountMuxed = muxed
+	}
+
+	inner := fb.Tx.InnerTx
+	if inner.V1 == nil {
+		// The only inner type the protocol defines today is ENVELOPE_TYPE_TX.
+		// A new arm must not fall through silently as "no inner transaction".
+		return fmt.Errorf("fee bump inner transaction has unhandled type %d", inner.Type)
+	}
+	source := inner.V1.Tx.SourceAccount.ToAccountId().Address()
+	txData.InnerSourceAccount = &source
+
+	innerEnvelope := xdr.TransactionEnvelope{Type: xdr.EnvelopeTypeEnvelopeTypeTx, V1: inner.V1}
+	hash, err := network.HashTransactionInEnvelope(innerEnvelope, passphrase)
+	if err != nil {
+		return fmt.Errorf("hash inner transaction: %w", err)
+	}
+	hex := hex.EncodeToString(hash[:])
+	txData.InnerTransactionHash = &hex
+	return nil
+}
+
+// populatePreconditionFields records the CAP-0021 preconditions a
+// transaction declares. Only PRECOND_V2 carries them; PRECOND_NONE and
+// PRECOND_TIME leave every field here nil, which is the point -- an
+// undeclared precondition is absent, not zero.
+func populatePreconditionFields(tx ingest.LedgerTransaction, txData *TransactionData) {
+	// Envelope.Preconditions resolves through a fee bump to the inner
+	// transaction, which is where the preconditions live. Reading
+	// Envelope.V1 directly would skip every fee-bumped transaction -- 2,190
+	// of 14,590 across the committed fixtures.
+	cond, ok := tx.Envelope.Preconditions().GetV2()
+	if !ok {
+		return
+	}
+	if lb := cond.LedgerBounds; lb != nil {
+		min := int64(lb.MinLedger)
+		txData.LedgerboundsMin = &min
+		// MaxLedger 0 means "no upper bound" in the protocol, and is a
+		// declared value rather than a missing one, so it is recorded.
+		max := int64(lb.MaxLedger)
+		txData.LedgerboundsMax = &max
+	}
+	if cond.MinSeqNum != nil {
+		n := int64(*cond.MinSeqNum)
+		txData.MinSequenceNumber = &n
+	}
+	if cond.MinSeqAge != 0 {
+		age := int64(cond.MinSeqAge)
+		txData.MinSequenceAge = &age
+	}
+	if len(cond.ExtraSigners) > 0 {
+		keys := make([]string, 0, len(cond.ExtraSigners))
+		for _, signer := range cond.ExtraSigners {
+			keys = append(keys, signer.Address())
+		}
+		if raw, err := json.Marshal(keys); err == nil {
+			s := string(raw)
+			txData.ExtraSigners = &s
+		}
+	}
+}
+
+// populateSorobanDeclaredFields records the resources a Soroban transaction
+// declared and the contract events its meta carries.
+func populateSorobanDeclaredFields(tx ingest.LedgerTransaction, txData *TransactionData) error {
+	// GetSorobanData resolves through a fee bump; Envelope.V1 does not, and
+	// Soroban transactions are routinely fee-bumped.
+	if data, ok := tx.GetSorobanData(); ok {
+		encoded, err := data.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("marshal soroban data: %w", err)
+		}
+		size := int32(len(encoded))
+		txData.SorobanDataSizeBytes = &size
+
+		resources := map[string]any{
+			"instructions":    uint32(data.Resources.Instructions),
+			"disk_read_bytes": uint32(data.Resources.DiskReadBytes),
+			"write_bytes":     uint32(data.Resources.WriteBytes),
+			"footprint_read":  len(data.Resources.Footprint.ReadOnly),
+			"footprint_write": len(data.Resources.Footprint.ReadWrite),
+			"resource_fee":    int64(data.ResourceFee),
+		}
+		raw, err := json.Marshal(resources)
+		if err != nil {
+			return fmt.Errorf("marshal soroban resources: %w", err)
+		}
+		s := string(raw)
+		txData.SorobanDataResources = &s
+	}
+
+	// Contract events emitted by this transaction's Soroban invocation.
+	//
+	// Counted through GetTransactionEvents rather than off SorobanMeta
+	// directly: CAP-67 moved the event lists out of SorobanMeta in meta V4,
+	// so reading that field would report nil for every ledger on the
+	// current protocol. The SDK normalises both -- for V3 it sets
+	// OperationEvents[0] to exactly SorobanMeta.Events, and for V4 it reads
+	// the per-operation lists -- so the two agree by construction.
+	//
+	// Gated on IsSorobanTx because V4 also gives *classic* operations
+	// contract events. Counting those would file classic payment events
+	// under a column named soroban_contract_events_count, which is how a
+	// column comes to mean something different from what it says.
+	if !tx.IsSorobanTx() {
+		return nil
+	}
+	events, err := tx.GetTransactionEvents()
+	if err != nil {
+		return fmt.Errorf("transaction events: %w", err)
+	}
+	var count int32
+	for _, opEvents := range events.OperationEvents {
+		count += int32(len(opEvents))
+	}
+	txData.SorobanContractEventsCount = &count
+	return nil
 }
