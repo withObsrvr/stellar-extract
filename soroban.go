@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/toid"
+
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/ingest/sac"
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -40,10 +42,18 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 		return events, nil
 	}
 
+	// 1-indexed per TOID convention, counted the same way transactions.go
+	// counts it. Deliberately the same shape rather than a second derivation:
+	// an identity computed two ways is how amounts ended up off by 10^7 and
+	// how 86% of a table was discarded on insert.
+	var txIndex int32 = 1
+
 	for _, tx := range txs {
 
 		txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
 		txSuccessful := tx.Result.Successful()
+		txID := toid.New(int32(input.Sequence), txIndex, 0).ToInt64()
+		txIndex++
 
 		txEvents, err := tx.GetTransactionEvents()
 		if err != nil {
@@ -59,6 +69,7 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 		for _, diagEvent := range txEvents.DiagnosticEvents {
 			eventData := extractDiagnosticEvent(diagEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, eventIndex, txSuccessful)
 			eventData.EraID = input.EraID
+			eventData.TransactionID = txID
 			events = append(events, eventData)
 			eventIndex++
 		}
@@ -68,6 +79,8 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 			for _, contractEvent := range opEvents {
 				eventData := extractContractEvent(contractEvent, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, uint32(opIdx), eventIndex, EventStreamOperation, false, txSuccessful)
 				eventData.EraID = input.EraID
+				eventData.TransactionID = txID
+				eventData.TransactionID = txID
 				events = append(events, eventData)
 				eventIndex++
 			}
@@ -78,6 +91,7 @@ func ExtractContractEvents(input *LedgerInput) ([]ContractEventData, error) {
 		for _, txEvt := range txEvents.TransactionEvents {
 			eventData := extractContractEvent(txEvt.Event, txHash, input.Sequence, input.ClosedAt, input.LedgerRange, 0, eventIndex, EventStreamTransaction, true, txSuccessful)
 			eventData.EraID = input.EraID
+			eventData.TransactionID = txID
 			events = append(events, eventData)
 			eventIndex++
 		}
@@ -102,6 +116,10 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 	var events []ContractEventData
 	for txIndex := range transactions {
 		transaction := transactions[txIndex]
+		// +1: the loop index is 0-based, the TOID convention is 1-based, and
+		// transactions.go counts from 1. Off by one here would give every
+		// event a TransactionID belonging to the previous transaction.
+		txID := toid.New(int32(input.Sequence), int32(txIndex)+1, 0).ToInt64()
 		txHash := hex.EncodeToString(transaction.Hash[:])
 		eventIndex := uint32(0)
 
@@ -120,6 +138,7 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 				transaction.Successful,
 			)
 			row.EraID = input.EraID
+			row.TransactionID = txID
 			events = append(events, row)
 			eventIndex++
 		}
@@ -143,6 +162,8 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 					transaction.Successful,
 				)
 				row.EraID = input.EraID
+				row.TransactionID = txID
+				row.TransactionID = txID
 				events = append(events, row)
 				eventIndex++
 			}
@@ -166,6 +187,7 @@ func extractContractEventsFromViews(input *LedgerViewInput, transactions []inges
 				transaction.Successful,
 			)
 			row.EraID = input.EraID
+			row.TransactionID = txID
 			events = append(events, row)
 			eventIndex++
 		}
