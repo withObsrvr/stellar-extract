@@ -4,10 +4,20 @@ import "time"
 
 // ContractEventData represents Soroban contract events stream (contract_events_stream_v1)
 type ContractEventData struct {
-	EventID                  string
-	ContractID               *string // C-address (strkey-encoded), e.g. "CAAAA..."
-	LedgerSequence           uint32
-	TransactionHash          string
+	EventID         string
+	ContractID      *string // C-address (strkey-encoded), e.g. "CAAAA..."
+	LedgerSequence  uint32
+	TransactionHash string
+	// TransactionID is the TOID of the transaction this event belongs to --
+	// toid.New(ledger, txIndex, 0), the same value TransactionData.TransactionID
+	// carries for the parent row.
+	//
+	// It exists so a consumer can reach the transaction without storing its
+	// hash on every event. transaction_hash is 700 GB of cold Bronze on this
+	// table and event_id, which embeds it, is another 800 GB; an int64 is ~4
+	// bytes per row. Dropping those is the Bronze storage contract's rule 3,
+	// and this field is its prerequisite.
+	TransactionID            int64
 	ClosedAt                 time.Time
 	EventType                string
 	InSuccessfulContractCall bool
